@@ -136,6 +136,20 @@ extension JsonPick on Map<String, dynamic> {
     return null;
   }
 
+  BigInt? bigInt(String key) {
+    final v = this[key];
+    if (v == null) return null;
+    if (v is BigInt) return v;
+    if (v is int) return BigInt.from(v);
+    return BigInt.tryParse(v.toString());
+  }
+
+  BigInt bigIntReq(String key) {
+    final b = bigInt(key);
+    if (b == null) throw FormatException('Missing BigInt "$key"');
+    return b;
+  }
+
   T? enumOrNull<T extends Enum>(String key, List<T> values) {
     final v = this[key];
     if (v == null) return null;

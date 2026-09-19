@@ -3,15 +3,23 @@ import 'dart:typed_data';
 
 /// Converts Dart values ↔ JSON-safe values without code generation.
 ///
-/// Supported out of the box:
-/// - null, bool, num, String
-/// - [DateTime] → ISO-8601 UTC string
-/// - [Duration] → milliseconds int
-/// - [Uri] → string
-/// - [Enum] → `.name`
-/// - [Uint8List] / byte lists → base64
-/// - [JsonEncodable] / objects with `toJson()`
-/// - [List], [Map], [Set], [Iterable] (deep)
+/// Built-in encode support (same practical set as typical
+/// `json_serializable` + converters):
+///
+/// | Dart | JSON |
+/// |------|------|
+/// | `null` / `bool` / `num` / `String` | as-is |
+/// | `DateTime` | ISO-8601 UTC string |
+/// | `Duration` | milliseconds `int` |
+/// | `Uri` | string |
+/// | `BigInt` | string (safe for JS / JSON numbers) |
+/// | `Enum` | `.name` |
+/// | `Uint8List` / `ByteBuffer` | base64 string |
+/// | `JsonEncodable` / `toJson()` | object / value |
+/// | `List` / `Set` / `Iterable` / `Map` | deep-encoded |
+///
+/// Custom types: implement [JsonEncodable] or add a `toJson()` method.
+/// For one-off fields, use [JsonPick] converters on read.
 class JsonCodecX {
   JsonCodecX._();
 
@@ -32,20 +40,26 @@ class JsonCodecX {
     if (value is Uri) {
       return value.toString();
     }
+    if (value is BigInt) {
+      return value.toString();
+    }
     if (value is Enum) {
       return value.name;
     }
     if (value is Uint8List) {
       return base64Encode(value);
     }
+    if (value is ByteBuffer) {
+      return base64Encode(value.asUint8List());
+    }
     if (value is JsonEncodable) {
       return encode(value.toJson());
     }
-    // duck-typed toJson()
+    // duck-typed toJson() — same pattern as many hand-written models
     try {
       final dynamic dyn = value;
       final json = dyn.toJson();
-      if (json != value) return encode(json);
+      if (!identical(json, value)) return encode(json);
     } catch (_) {}
     if (value is Map) {
       return <String, dynamic>{
@@ -56,7 +70,10 @@ class JsonCodecX {
     if (value is Iterable) {
       return [for (final e in value) encode(e)];
     }
-    return value.toString();
+    throw JsonCodecException(
+      'Cannot encode ${value.runtimeType}. '
+      'Implement JsonEncodable / toJson(), or pass a supported type.',
+    );
   }
 
   /// `jsonEncode(encode(value))`.
@@ -77,6 +94,20 @@ class JsonCodecX {
     if (v is Map) return Map<String, dynamic>.from(v);
     throw FormatException('Expected JSON object, got ${v.runtimeType}');
   }
+
+  static List<dynamic> decodeList(String source) {
+    final v = jsonDecode(source);
+    if (v is List) return v;
+    throw FormatException('Expected JSON array, got ${v.runtimeType}');
+  }
+}
+
+/// Thrown when [JsonCodecX.encode] meets an unsupported type.
+class JsonCodecException implements Exception {
+  JsonCodecException(this.message);
+  final String message;
+  @override
+  String toString() => 'JsonCodecException: $message';
 }
 
 /// Implement on models that own their `toJson` shape.

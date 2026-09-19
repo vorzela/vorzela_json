@@ -21,24 +21,48 @@ class User extends JsonModel {
   Duration? get ttl => $duration('ttl');
   set ttl(Duration? v) => $set('ttl', v);
 
-  Uint8List? get avatar => $data.bytes('avatar');
+  Uint8List? get avatar => $bytes('avatar');
   set avatar(Uint8List? v) => $set('avatar', v);
+
+  BigInt? get balance => $bigInt('balance');
+  set balance(BigInt? v) => $set('balance', v);
+}
+
+class Order {
+  Order({required this.id, required this.at, required this.total});
+  final String id;
+  final DateTime at;
+  final BigInt total;
+
+  factory Order.fromJson(Map<String, dynamic> j) => Order(
+        id: j.str('id'),
+        at: j.dateTimeReq('at'),
+        total: j.bigIntReq('total'),
+      );
+
+  Map<String, dynamic> toJson() => jsonMap({
+        'id': id,
+        'at': at,
+        'total': total,
+      });
 }
 
 void main() {
-  test('JsonModel round-trips DateTime Enum Duration bytes', () {
+  test('JsonModel round-trips DateTime Enum Duration bytes BigInt', () {
     final u = User()
       ..name = 'Ada'
       ..createdAt = DateTime.utc(2026, 1, 2, 3, 4, 5)
       ..role = Role.admin
       ..ttl = const Duration(seconds: 90)
-      ..avatar = Uint8List.fromList([1, 2, 3]);
+      ..avatar = Uint8List.fromList([1, 2, 3])
+      ..balance = BigInt.parse('9007199254740993');
 
     final raw = u.toJsonString();
     final map = jsonDecode(raw) as Map<String, dynamic>;
     expect(map['createdAt'], '2026-01-02T03:04:05.000Z');
     expect(map['role'], 'admin');
     expect(map['ttl'], 90000);
+    expect(map['balance'], '9007199254740993');
 
     final back = User(map);
     expect(back.name, 'Ada');
@@ -46,15 +70,17 @@ void main() {
     expect(back.role, Role.admin);
     expect(back.ttl, const Duration(seconds: 90));
     expect(back.avatar, Uint8List.fromList([1, 2, 3]));
+    expect(back.balance, BigInt.parse('9007199254740993'));
   });
 
-  test('jsonMap encodes nested values', () {
+  test('jsonMap encodes nested values and Set', () {
     final m = jsonMap({
       'when': DateTime.utc(2020),
-      'tags': ['a', 'b'],
+      'tags': {'a', 'b'},
       'nested': {'d': const Duration(days: 1)},
     });
     expect(m['when'], '2020-01-01T00:00:00.000Z');
+    expect(m['tags'], isA<List>());
     expect((m['nested'] as Map)['d'], 86400000);
   });
 
@@ -67,5 +93,41 @@ void main() {
       {'t': 1700000000}.dateTime('t')!.millisecondsSinceEpoch,
       1700000000000,
     );
+  });
+
+  test('unsupported type throws', () {
+    expect(
+      () => JsonCodecX.encode(Object()),
+      throwsA(isA<JsonCodecException>()),
+    );
+  });
+
+  test('JsonHttp map/list/body for Dio- and http-style payloads', () {
+    final user = JsonHttp.map(
+      {'name': 'Ada', 'role': 'admin'},
+      User.new,
+    );
+    expect(user.name, 'Ada');
+    expect(user.role, Role.admin);
+
+    final users = JsonHttp.list(
+      [
+        {'name': 'A'},
+        {'name': 'B'},
+      ],
+      User.new,
+    );
+    expect(users.map((u) => u.name), ['A', 'B']);
+
+    final order = JsonHttp.body(
+      '{"id":"1","at":"2026-01-01T00:00:00.000Z","total":"42"}',
+      Order.fromJson,
+    );
+    expect(order.id, '1');
+    expect(order.total, BigInt.from(42));
+
+    expect(JsonHttp.data(user)['name'], 'Ada');
+    expect(user.asRequestData['name'], 'Ada');
+    expect(jsonDecode(user.asRequestBody), isA<Map>());
   });
 }

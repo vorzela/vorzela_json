@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'codec.dart';
 import 'pick.dart';
 
@@ -44,6 +46,8 @@ class JsonModel implements JsonEncodable {
   DateTime? $dateTime(String key) => $data.dateTime(key);
   Duration? $duration(String key) => $data.duration(key);
   Uri? $uri(String key) => $data.uri(key);
+  Uint8List? $bytes(String key) => $data.bytes(key);
+  BigInt? $bigInt(String key) => $data.bigInt(key);
   T $enum<T extends Enum>(String key, List<T> values, T fallback) =>
       $data.enumReq(key, values, fallback);
   T? $enumOrNull<T extends Enum>(String key, List<T> values) =>
