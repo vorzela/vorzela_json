@@ -8,6 +8,7 @@ enum Role { admin, member }
 
 class User extends JsonModel {
   User([super.data]);
+  User.fromJson(super.json) : super.fromJson();
 
   String get name => $str('name');
   set name(String v) => $set('name', v);
@@ -15,7 +16,8 @@ class User extends JsonModel {
   DateTime? get createdAt => $dateTime('createdAt');
   set createdAt(DateTime? v) => $set('createdAt', v);
 
-  Role get role => $enum('role', Role.values, Role.member);
+  /// Role.values = lookup table; or: = fallback if JSON missing/unknown.
+  Role get role => $enumAt('role', among: Role.values, or: Role.member);
   set role(Role v) => $set('role', v);
 
   Duration? get ttl => $duration('ttl');
@@ -26,6 +28,11 @@ class User extends JsonModel {
 
   BigInt? get balance => $bigInt('balance');
   set balance(BigInt? v) => $set('balance', v);
+
+  JsonFile? get photo => $file('photo');
+  set photo(JsonFile? v) => $setModel('photo', v);
+
+  List<JsonFile> get files => $files('files');
 }
 
 class Order {
@@ -48,6 +55,18 @@ class Order {
 }
 
 void main() {
+  test('JSON string role "admin" becomes Role.admin via Role.values', () {
+    // This is the confusing bit: values = search list, not the assigned case.
+    final user = User.fromJson({'name': 'Ada', 'role': 'admin'});
+    expect(user.role, Role.admin);
+
+    user.role = Role.member;
+    expect(user.toJson()['role'], 'member');
+
+    // Missing role → fallback Role.member
+    expect(User.fromJson({'name': 'x'}).role, Role.member);
+  });
+
   test('JsonModel round-trips DateTime Enum Duration bytes BigInt', () {
     final u = User()
       ..name = 'Ada'
@@ -64,13 +83,38 @@ void main() {
     expect(map['ttl'], 90000);
     expect(map['balance'], '9007199254740993');
 
-    final back = User(map);
+    final back = User.fromJson(map);
     expect(back.name, 'Ada');
     expect(back.createdAt, DateTime.utc(2026, 1, 2, 3, 4, 5));
     expect(back.role, Role.admin);
     expect(back.ttl, const Duration(seconds: 90));
     expect(back.avatar, Uint8List.fromList([1, 2, 3]));
     expect(back.balance, BigInt.parse('9007199254740993'));
+  });
+
+  test('JsonFile from API metadata JSON', () {
+    final post = User.fromJson({
+      'name': 'Ada',
+      'role': 'admin',
+      'photo': {
+        'name': 'me.png',
+        'url': 'https://cdn/me.png',
+        'mimeType': 'image/png',
+        'size': 12,
+        'bytes': base64Encode([9, 8, 7]),
+      },
+      'files': [
+        {'name': 'a.pdf', 'url': 'https://cdn/a.pdf'},
+      ],
+    });
+
+    expect(post.photo?.name, 'me.png');
+    expect(post.photo?.url, 'https://cdn/me.png');
+    expect(post.photo?.mimeType, 'image/png');
+    expect(post.photo?.size, 12);
+    expect(post.photo?.bytes, Uint8List.fromList([9, 8, 7]));
+    expect(post.files.single.name, 'a.pdf');
+    expect(post.files.single.hasUrl, isTrue);
   });
 
   test('jsonMap encodes nested values and Set', () {
@@ -105,19 +149,20 @@ void main() {
   test('JsonHttp map/list/body for Dio- and http-style payloads', () {
     final user = JsonHttp.map(
       {'name': 'Ada', 'role': 'admin'},
-      User.new,
+      User.fromJson,
     );
     expect(user.name, 'Ada');
     expect(user.role, Role.admin);
 
     final users = JsonHttp.list(
       [
-        {'name': 'A'},
-        {'name': 'B'},
+        {'name': 'A', 'role': 'member'},
+        {'name': 'B', 'role': 'admin'},
       ],
-      User.new,
+      User.fromJson,
     );
     expect(users.map((u) => u.name), ['A', 'B']);
+    expect(users[1].role, Role.admin);
 
     final order = JsonHttp.body(
       '{"id":"1","at":"2026-01-01T00:00:00.000Z","total":"42"}',

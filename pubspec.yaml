@@ -1,6 +1,6 @@
 name: vorzela_json
-description: Write Dart models once — JSON for DateTime, Duration, Uri, BigInt, Enum, bytes. No codegen. Works with Dio and package:http.
-version: 0.0.2
+description: JSON from the network to Dart models — DateTime, enums, JsonFile, Dio/http helpers. No codegen.
+version: 0.0.3
 homepage: https://github.com/vorzela/vorzela_json
 repository: https://github.com/vorzela/vorzela_json
 license: MIT
