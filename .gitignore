@@ -1,0 +1,5 @@
+# Ignore build artifacts
+.dart_tool/
+.packages
+pubspec.lock
+build/

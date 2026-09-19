@@ -1,0 +1,13 @@
+name: vorzela_json
+description: Write Dart models once — JSON encode/decode for DateTime, Duration, Uri, Enum, Uint8List, nested models. No code generation.
+version: 0.0.1
+homepage: https://github.com/vorzela/vorzela_json
+repository: https://github.com/vorzela/vorzela_json
+license: MIT
+
+environment:
+  sdk: ^3.3.0
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0
