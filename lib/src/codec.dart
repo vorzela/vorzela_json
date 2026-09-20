@@ -55,12 +55,17 @@ class JsonCodecX {
     if (value is JsonEncodable) {
       return encode(value.toJson());
     }
-    // duck-typed toJson() — same pattern as many hand-written models
+    // duck-typed toJson() — same pattern as many hand-written models.
+    // Only swallow the "no such method" case (value has no toJson()); a
+    // real exception *thrown inside* the user's toJson() must propagate,
+    // not get masked by the generic "implement toJson()" error below.
     try {
       final dynamic dyn = value;
       final json = dyn.toJson();
       if (!identical(json, value)) return encode(json);
-    } catch (_) {}
+    } on NoSuchMethodError {
+      // falls through to the unsupported-type error below
+    }
     if (value is Map) {
       return <String, dynamic>{
         for (final e in value.entries)

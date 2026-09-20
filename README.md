@@ -15,6 +15,9 @@ HTTP body  →  Map / List  →  Your model
 
 You write the model once. DateTime, enums, files, nested objects convert both ways.
 
+Nested models share the parent's map (so `user.photo?.name = 'x'` sticks). Use
+`JsonModel.copyOf(data)` when you need a defensive clone.
+
 ---
 
 ## Enums — why `Role.values`, not `Role.admin`

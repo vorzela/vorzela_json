@@ -9,6 +9,7 @@ enum Role { admin, member }
 class User extends JsonModel {
   User([super.data]);
   User.fromJson(super.json) : super.fromJson();
+  User.copyOf(super.data) : super.copyOf();
 
   String get name => $str('name');
   set name(String v) => $set('name', v);
@@ -52,6 +53,10 @@ class Order {
         'at': at,
         'total': total,
       });
+}
+
+class _BrokenToJson {
+  Map<String, dynamic> toJson() => throw StateError('boom');
 }
 
 void main() {
@@ -144,6 +149,68 @@ void main() {
       () => JsonCodecX.encode(Object()),
       throwsA(isA<JsonCodecException>()),
     );
+  });
+
+  test('nested model writes propagate back to the parent (no silent loss)', () {
+    final user = User.fromJson({
+      'name': 'Ada',
+      'photo': {'name': 'old.png', 'url': 'https://cdn/old.png'},
+      'files': [
+        {'name': 'a.pdf'},
+        {'name': 'b.pdf'},
+      ],
+    });
+
+    // Mutating a model read via $model must be visible on the parent —
+    // previously this silently mutated a throwaway copy.
+    user.photo!.name = 'new.png';
+    expect(user.toJson()['photo']['name'], 'new.png');
+
+    // Same for entries read via $models.
+    user.files[0].name = 'renamed.pdf';
+    expect(user.toJson()['files'][0]['name'], 'renamed.pdf');
+  });
+
+  test('toJson() output is independent of \$data (no output aliasing)', () {
+    final user = User.fromJson({'name': 'Ada'});
+    final json = user.toJson();
+    json['name'] = 'Mutated';
+    // The encoded output is a fresh map — mutating it must not reach back
+    // into the model's own backing data.
+    expect(user.name, 'Ada');
+  });
+
+  test('JsonModel.copyOf isolates the model from the original map', () {
+    final source = <String, dynamic>{'name': 'Ada'};
+    final user = User.copyOf(source);
+    user.name = 'Changed';
+    // copyOf clones on the way in, so the caller's map is untouched.
+    expect(source['name'], 'Ada');
+  });
+
+  test('default constructor shares the map you pass it (fast path)', () {
+    final source = <String, dynamic>{'name': 'Ada'};
+    final user = User.fromJson(source);
+    user.name = 'Changed';
+    // fromJson/the default constructor wrap by reference, no copy.
+    expect(source['name'], 'Changed');
+  });
+
+  test(
+      'encode() propagates real errors from a custom toJson() instead of '
+      'masking them as "unsupported type"', () {
+    expect(
+      () => JsonCodecX.encode(_BrokenToJson()),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('\$setModel shares the nested bag so later writes still propagate', () {
+    final user = User({'name': 'Ada'});
+    final photo = JsonFile({'name': 'a.png'});
+    user.photo = photo;
+    photo.name = 'b.png';
+    expect(user.toJson()['photo']['name'], 'b.png');
   });
 
   test('JsonHttp map/list/body for Dio- and http-style payloads', () {
