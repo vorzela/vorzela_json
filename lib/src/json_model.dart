@@ -1,57 +1,30 @@
 import 'dart:typed_data';
 
 import 'codec.dart';
+import 'model_list.dart';
 import 'pick.dart';
 
 /// Bag-backed model: JSON map in → typed getters out. No codegen.
-///
-/// ```dart
-/// // API sent: {"name":"Ada","role":"admin"}
-/// final user = User({'name': 'Ada', 'role': 'admin'});
-/// print(user.role); // Role.admin   ← matched from Role.values by name
-///
-/// user.role = Role.member;          ← you assign a case when writing
-/// print(user.toJson());             // {"name":"Ada","role":"member"}
-/// ```
 ///
 /// Nested models: [$model] / [$setModel]. Files: see [JsonFile].
 ///
 /// The model wraps its map by reference (see the constructor), so nested
 /// models read via [$model] / [$models] share the parent's data — mutating
 /// one is visible through the other.
+///
+/// Large arrays (product catalogs, ~200+ items): prefer [$models] /
+/// [JsonHttp.models] — they return a [JsonModelList] that wraps each
+/// element only when that index is read (ListView-friendly).
 class JsonModel implements JsonEncodable {
-  /// Wraps [data] directly — no defensive copy. This is the fast, common
-  /// path: a freshly `jsonDecode`-d body (or a sub-map pulled out for a
-  /// nested model) isn't referenced anywhere else, so there's nothing to
-  /// protect by cloning it. Because the map is shared, mutating a nested
-  /// model (`user.photo?.name = 'x'`) is immediately visible through the
-  /// parent (`user.toJson()`), and vice versa.
-  ///
-  /// If you're wrapping a map you still hold a reference to elsewhere and
-  /// want the model to be independent of later changes to it, use
-  /// [JsonModel.copyOf] instead.
-  ///
-  /// This is always safe for real JSON: `jsonDecode()` (and this package's
-  /// own [JsonCodecX.decodeMap]) always hand back a proper
-  /// `Map<String, dynamic>` that accepts any value type, no matter what
-  /// values happened to be in the JSON. The one case to watch for is
-  /// wrapping a Dart map *literal* you built and stored in a variable by
-  /// hand (not passed straight into `fromJson(...)`), where every value
-  /// happens to share a type — Dart can infer that as e.g.
-  /// `Map<String, String>`, and a later `$set` with a differently-typed
-  /// value (a `DateTime`, an `int`, ...) would throw at runtime. Use
-  /// [JsonModel.copyOf] for those, since it normalizes the copy to
-  /// `Map<String, dynamic>`.
+  /// Wraps [data] directly — no defensive copy. See [JsonModel.copyOf] when
+  /// you need isolation from a map you still mutate elsewhere.
   JsonModel([Map<String, dynamic>? data])
       : $data = data ?? <String, dynamic>{};
 
   /// Same as `Model(json)` — explicit name for Dio/http call sites.
   JsonModel.fromJson(Map<String, dynamic> json) : this(json);
 
-  /// Like the default constructor, but clones [data] first so this model is
-  /// fully isolated from any other holder of that map. Use this when [data]
-  /// is a long-lived map you keep mutating elsewhere and don't want that
-  /// bleeding into the model (or vice versa).
+  /// Defensive-copy constructor — isolates this model from [data].
   JsonModel.copyOf(Map<String, dynamic> data)
       : this(Map<String, dynamic>.from(data));
 
@@ -74,22 +47,8 @@ class JsonModel implements JsonEncodable {
   Uint8List? $bytes(String key) => $data.bytes(key);
   BigInt? $bigInt(String key) => $data.bigInt(key);
 
-  /// Read an enum from JSON.
-  ///
-  /// - [among] is **every** case: pass `Role.values` (the lookup table).
-  /// - JSON `"admin"` becomes `Role.admin` by matching `.name`.
-  /// - [or] is only used when the key is missing or the string is unknown —
-  ///   it is **not** “the value of the field”.
-  ///
-  /// ```dart
-  /// // JSON: { "role": "admin" }
-  /// Role get role => $enumAt('role', among: Role.values, or: Role.member);
-  /// //                           ^^^^^^^^^^^              ^^^^^^^^^^^^^^^
-  /// //                           all cases to search      default if absent
-  ///
-  /// // To *set* admin:
-  /// set role(Role v) => $set('role', v);  // user.role = Role.admin;
-  /// ```
+  /// Read an enum from JSON — [among] is every case (`Role.values`);
+  /// [or] is fallback only when missing/unknown.
   T $enumAt<T extends Enum>(
     String key, {
     required List<T> among,
@@ -97,14 +56,13 @@ class JsonModel implements JsonEncodable {
   }) =>
       $data.enumReq(key, among, or);
 
-  /// Like [$enumAt] but returns `null` when missing/unknown (no default).
   T? $enumAtOrNull<T extends Enum>(
     String key, {
     required List<T> among,
   }) =>
       $data.enumOrNull(key, among);
 
-  /// Deprecated alias — prefer [$enumAt] (clearer parameter names).
+  /// Deprecated alias — prefer [$enumAt].
   T $enum<T extends Enum>(String key, List<T> values, T fallback) =>
       $enumAt(key, among: values, or: fallback);
 
@@ -114,21 +72,17 @@ class JsonModel implements JsonEncodable {
   List<T> $list<T>(String key, T Function(dynamic) map) =>
       $data.listOf(key, map);
 
-  List<T> $models<T extends JsonModel>(
+  /// Nested models as a [JsonModelList] — **lazy**, index-cached.
+  ///
+  /// Prefer this for arrays of tens–hundreds of objects (product lists,
+  /// search hits). `list[i]` allocates a model only when that row is read.
+  JsonModelList<T> $models<T extends JsonModel>(
     String key,
     T Function(Map<String, dynamic>) create,
   ) {
     final v = $data[key];
-    if (v is! List) return const [];
-    // Build the model list directly instead of materializing an
-    // intermediate List<Map> first — halves the allocations for arrays of
-    // nested models.
-    return [
-      for (final e in v)
-        create(
-          e is Map<String, dynamic> ? e : Map<String, dynamic>.from(e as Map),
-        ),
-    ];
+    if (v is! List) return JsonModelList.empty(create);
+    return JsonModelList(v, create);
   }
 
   T? $model<T extends JsonModel>(
@@ -148,7 +102,7 @@ class JsonModel implements JsonEncodable {
 
   JsonFile? $file(String key) => $model(key, JsonFile.new);
 
-  List<JsonFile> $files(String key) => $models(key, JsonFile.new);
+  JsonModelList<JsonFile> $files(String key) => $models(key, JsonFile.new);
 
   // ── write ────────────────────────────────────────────────────────────
 
@@ -164,9 +118,16 @@ class JsonModel implements JsonEncodable {
     if (model == null) {
       $data.remove(key);
     } else {
-      // Share the nested model's bag so later mutations on [model] stay
-      // visible on this parent (same contract as [$model] reads).
       $data[key] = model.$data;
+    }
+  }
+
+  /// Replace / set a nested array, sharing [list.raw] when possible.
+  void $setModels(String key, JsonModelList<JsonModel>? list) {
+    if (list == null) {
+      $data.remove(key);
+    } else {
+      $data[key] = list.raw;
     }
   }
 
@@ -178,9 +139,6 @@ class JsonModel implements JsonEncodable {
 
   @override
   Map<String, dynamic> toJson() {
-    // JsonCodecX.encode(Map) already builds a fresh Map<String, dynamic>
-    // (see codec.dart), so re-wrapping it in Map.from() was a second,
-    // pointless full copy on every single serialize call.
     final encoded = JsonCodecX.encode($data);
     return encoded is Map<String, dynamic>
         ? encoded
@@ -190,10 +148,6 @@ class JsonModel implements JsonEncodable {
   String toJsonString({bool pretty = false}) =>
       JsonCodecX.encodeString(toJson(), pretty: pretty);
 
-  /// Replace bag contents from a decoded JSON object.
-  ///
-  /// Clears and [Map.addAll]s into the existing bag (does not swap the map
-  /// identity), so nested models that already share this bag keep working.
   void loadJson(Map<String, dynamic> json) {
     $data
       ..clear()
@@ -205,19 +159,6 @@ class JsonModel implements JsonEncodable {
 }
 
 /// File metadata as APIs usually return it in JSON (not a dart:io [File]).
-///
-/// ```json
-/// {
-///   "name": "clip.mp4",
-///   "url": "https://cdn/clip.mp4",
-///   "mimeType": "video/mp4",
-///   "size": 1024,
-///   "bytes": "<base64 optional>"
-/// }
-/// ```
-///
-/// Multipart upload still uses Dio `FormData` / `MultipartFile` — [JsonFile]
-/// is for **JSON fields that describe a file** (URL, name, size, embedded bytes).
 class JsonFile extends JsonModel {
   JsonFile([super.data]);
   JsonFile.fromJson(super.json) : super.fromJson();
@@ -226,11 +167,9 @@ class JsonFile extends JsonModel {
   String get name => $str('name');
   set name(String v) => $set('name', v);
 
-  /// Local path when the API echoes one (rare on mobile).
   String? get path => $strOrNull('path') ?? $strOrNull('filePath');
   set path(String? v) => $set('path', v);
 
-  /// Public / signed URL.
   String? get url => $strOrNull('url') ?? $strOrNull('href');
   set url(String? v) => $set('url', v);
 
@@ -248,7 +187,6 @@ class JsonFile extends JsonModel {
   int? get size => $intOrNull('size') ?? $intOrNull('length');
   set size(int? v) => $set('size', v);
 
-  /// Optional base64 payload inside JSON (small files / avatars).
   Uint8List? get bytes => $bytes('bytes') ?? $bytes('content') ?? $bytes('data');
   set bytes(Uint8List? v) => $set('bytes', v);
 

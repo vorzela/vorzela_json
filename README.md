@@ -116,10 +116,10 @@ await dio.post(
 final res = await dio.get('/users/1');
 final user = JsonHttp.map(res.data, User.fromJson);
 
-final list = JsonHttp.list(
-  (await dio.get('/users')).data,
-  User.fromJson,
-);
+final list = JsonHttp.models(
+  (await dio.get('/products')).data,
+  Product.fromJson,
+); // lazy — good for ~200 item catalogs
 
 await dio.post('/users', data: user.asRequestData);
 ```
@@ -166,6 +166,29 @@ dependencies:
 
 ---
 
+## Large lists (ecommerce catalogs)
+
+`$models` / `JsonHttp.models` return a **lazy** [JsonModelList]: constructing
+the list does not wrap every element. Each model is created when that index
+is read (and cached), so a `ListView` of 200 products only allocates the
+visible rows.
+
+```dart
+final products = JsonHttp.models(res.data, Product.fromJson);
+// or: catalog.$models('items', Product.fromJson)
+
+Text(products[index].title);          // wrap this row only
+products.mapAt(index).str('title');   // even lighter — raw map, no model
+```
+
+`JsonHttp.list` still exists for small arrays when you want every element
+eagerly wrapped.
+
+---
+
 ## vs `json_serializable`
 
-Same practical types for REST. No codegen. Slight Map-lookup cost — irrelevant vs network. Use codegen only if profiling huge offline decode loops.
+Same practical types for REST. No codegen. Field access is a map lookup
+(fine vs network). For huge offline decode loops that touch every field of
+every row, codegen can still win — for typical shop catalogs (~200 items +
+ListView), prefer `JsonHttp.models` / `$models`.

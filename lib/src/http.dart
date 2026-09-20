@@ -1,5 +1,6 @@
 import 'codec.dart';
 import 'json_model.dart';
+import 'model_list.dart';
 
 /// Helpers for Dio / `package:http` / `fetch`-style responses.
 ///
@@ -28,19 +29,21 @@ class JsonHttp {
   }
 
   /// Decode a JSON **array** string → list of models.
+  ///
+  /// Prefer [modelsBody] / [models] for large arrays (lazy wrap).
   static List<T> bodyList<T>(
     String source,
     T Function(Map<String, dynamic> json) fromJson,
   ) {
-    final list = JsonCodecX.decodeList(source);
-    return [
-      for (final e in list)
-        fromJson(
-          e is Map<String, dynamic>
-              ? e
-              : Map<String, dynamic>.from(e as Map),
-        ),
-    ];
+    return list(JsonCodecX.decodeList(source), fromJson);
+  }
+
+  /// Lazy [JsonModelList] from a JSON **array** string (ecommerce catalogs).
+  static JsonModelList<T> modelsBody<T extends JsonModel>(
+    String source,
+    T Function(Map<String, dynamic> json) fromJson,
+  ) {
+    return JsonModelList.from(JsonCodecX.decodeList(source), fromJson);
   }
 
   /// Dio / already-decoded `response.data` as a Map → model.
@@ -56,7 +59,9 @@ class JsonHttp {
     );
   }
 
-  /// Dio `response.data` as a List → models.
+  /// Dio `response.data` as a List → models (eager — wraps every element).
+  ///
+  /// For catalogs of ~100+ items prefer [models], which wraps on demand.
   static List<T> list<T>(
     Object? data,
     T Function(Map<String, dynamic> json) fromJson,
@@ -73,6 +78,21 @@ class JsonHttp {
               : Map<String, dynamic>.from(e as Map),
         ),
     ];
+  }
+
+  /// Dio `response.data` as a List → [JsonModelList] (lazy, cached wraps).
+  ///
+  /// Use this for product grids / search results (~200 items is fine):
+  /// ```dart
+  /// final products = JsonHttp.models(res.data, Product.fromJson);
+  /// Text(products[index].title); // only visible rows allocate
+  /// ```
+  static JsonModelList<T> models<T extends JsonModel>(
+    Object? data,
+    T Function(Map<String, dynamic> json) fromJson,
+  ) {
+    if (data is String) return modelsBody(data, fromJson);
+    return JsonModelList.from(data, fromJson);
   }
 
   /// Encode a model / map for `dio.post(data: …)` or `http.post(body: …)`.

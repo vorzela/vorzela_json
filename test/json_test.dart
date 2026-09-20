@@ -33,7 +33,7 @@ class User extends JsonModel {
   JsonFile? get photo => $file('photo');
   set photo(JsonFile? v) => $setModel('photo', v);
 
-  List<JsonFile> get files => $files('files');
+  JsonModelList<JsonFile> get files => $files('files');
 }
 
 class Order {
@@ -241,5 +241,54 @@ void main() {
     expect(JsonHttp.data(user)['name'], 'Ada');
     expect(user.asRequestData['name'], 'Ada');
     expect(jsonDecode(user.asRequestBody), isA<Map>());
+  });
+
+  test('JsonModelList lazy-wraps a 200-item ecommerce catalog', () {
+    final raw = <Map<String, dynamic>>[
+      for (var i = 0; i < 200; i++)
+        {
+          'name': 'Product $i',
+          'role': i.isEven ? 'admin' : 'member',
+          'balance': '$i',
+        },
+    ];
+
+    final products = JsonHttp.models(raw, User.fromJson);
+    expect(products, isA<JsonModelList<User>>());
+    expect(products.length, 200);
+
+    // Touch only a window of rows (ListView-style) — still correct.
+    expect(products[0].name, 'Product 0');
+    expect(products[50].name, 'Product 50');
+    expect(products[199].role, Role.member);
+
+    // Cached: same index returns the identical model instance.
+    expect(identical(products[50], products[50]), isTrue);
+
+    // Writes go through to the shared raw JSON.
+    products[7].name = 'Renamed';
+    expect(raw[7]['name'], 'Renamed');
+
+    // Raw map access avoids a model when you only need one field.
+    expect(products.mapAt(3).str('name'), 'Product 3');
+
+    // Full iteration still works (wraps each once).
+    expect(products.where((u) => u.role == Role.admin).length, 100);
+  });
+
+  test('\$models on a parent document is lazy for nested arrays', () {
+    final catalog = User.fromJson({
+      'name': 'shop',
+      'role': 'admin',
+      'files': [
+        for (var i = 0; i < 200; i++) {'name': 'f$i.pdf', 'size': i},
+      ],
+    });
+    final files = catalog.files;
+    expect(files.length, 200);
+    expect(files[10].name, 'f10.pdf');
+    expect(files[10].size, 10);
+    files[10].name = 'edited.pdf';
+    expect(catalog.toJson()['files'][10]['name'], 'edited.pdf');
   });
 }

@@ -22,12 +22,15 @@ extension JsonPick on Map<String, dynamic> {
   String str(String key, [String fallback = '']) {
     final v = this[key];
     if (v == null) return fallback;
+    // Hot path: JSON strings are already String — avoid toString().
+    if (v is String) return v;
     return v.toString();
   }
 
   String? strOrNull(String key) {
     final v = this[key];
     if (v == null) return null;
+    if (v is String) return v;
     return v.toString();
   }
 
