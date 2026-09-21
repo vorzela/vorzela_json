@@ -5,4 +5,5 @@ export 'src/codec.dart';
 export 'src/http.dart';
 export 'src/json_model.dart';
 export 'src/model_list.dart';
+export 'src/path.dart';
 export 'src/pick.dart';

@@ -41,9 +41,14 @@ class JsonHttp {
   /// Lazy [JsonModelList] from a JSON **array** string (ecommerce catalogs).
   static JsonModelList<T> modelsBody<T extends JsonModel>(
     String source,
-    T Function(Map<String, dynamic> json) fromJson,
-  ) {
-    return JsonModelList.from(JsonCodecX.decodeList(source), fromJson);
+    T Function(Map<String, dynamic> json) fromJson, {
+    int? maxCached,
+  }) {
+    return JsonModelList.from(
+      JsonCodecX.decodeList(source),
+      fromJson,
+      maxCached: maxCached,
+    );
   }
 
   /// Dio / already-decoded `response.data` as a Map → model.
@@ -89,16 +94,21 @@ class JsonHttp {
   /// ```
   static JsonModelList<T> models<T extends JsonModel>(
     Object? data,
-    T Function(Map<String, dynamic> json) fromJson,
-  ) {
-    if (data is String) return modelsBody(data, fromJson);
-    return JsonModelList.from(data, fromJson);
+    T Function(Map<String, dynamic> json) fromJson, {
+    int? maxCached,
+  }) {
+    if (data is String) {
+      return modelsBody(data, fromJson, maxCached: maxCached);
+    }
+    return JsonModelList.from(data, fromJson, maxCached: maxCached);
   }
 
-  /// Encode a model / map for `dio.post(data: …)` or `http.post(body: …)`.
+  /// Encode a model / map for `dio.post(data: …)`.
   ///
-  /// Returns a `Map` (Dio default JSON) — use [bodyString] for raw body text.
+  /// [JsonModel] uses [JsonModel.$json] — zero deep copy when the bag is
+  /// already JSON-safe (network decode / [JsonModel.$set]).
   static Map<String, dynamic> data(Object? value) {
+    if (value is JsonModel) return value.$json;
     final encoded = JsonCodecX.encode(value);
     if (encoded is Map<String, dynamic>) return encoded;
     if (encoded is Map) return Map<String, dynamic>.from(encoded);
@@ -108,14 +118,18 @@ class JsonHttp {
   }
 
   /// Encode to a JSON string for `http.post(body: …)`.
-  static String bodyString(Object? value, {bool pretty = false}) =>
-      JsonCodecX.encodeString(value, pretty: pretty);
+  static String bodyString(Object? value, {bool pretty = false}) {
+    if (value is JsonModel && !pretty) {
+      return JsonCodecX.encodeString(value.$json);
+    }
+    return JsonCodecX.encodeString(value, pretty: pretty);
+  }
 }
 
 /// Sugar on [JsonModel] for request/response.
 extension JsonModelHttp on JsonModel {
-  /// Ready for `dio.post(..., data: model.asRequestData)`.
-  Map<String, dynamic> get asRequestData => JsonHttp.data(this);
+  /// Ready for `dio.post(..., data: model.asRequestData)` — zero-copy bag.
+  Map<String, dynamic> get asRequestData => $json;
 
   /// Ready for `http.post(..., body: model.asRequestBody)`.
   String get asRequestBody => JsonHttp.bodyString(this);

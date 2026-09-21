@@ -2,36 +2,32 @@ import 'dart:typed_data';
 
 import 'codec.dart';
 import 'model_list.dart';
+import 'path.dart';
 import 'pick.dart';
 
 /// Bag-backed model: JSON map in → typed getters out. No codegen.
 ///
-/// Nested models: [$model] / [$setModel]. Files: see [JsonFile].
-///
-/// The model wraps its map by reference (see the constructor), so nested
-/// models read via [$model] / [$models] share the parent's data — mutating
-/// one is visible through the other.
-///
-/// Large arrays (product catalogs, ~200+ items): prefer [$models] /
-/// [JsonHttp.models] — they return a [JsonModelList] that wraps each
-/// element only when that index is read (ListView-friendly).
+/// Nested models share the parent's map. Deep fields: prefer [$strAt] /
+/// [$at] so you never allocate intermediate models. Large arrays: [$models]
+/// returns a lazy [JsonModelList].
 class JsonModel implements JsonEncodable {
-  /// Wraps [data] directly — no defensive copy. See [JsonModel.copyOf] when
-  /// you need isolation from a map you still mutate elsewhere.
+  /// Wraps [data] by reference — no copy. See [JsonModel.copyOf] to isolate.
   JsonModel([Map<String, dynamic>? data])
       : $data = data ?? <String, dynamic>{};
 
-  /// Same as `Model(json)` — explicit name for Dio/http call sites.
   JsonModel.fromJson(Map<String, dynamic> json) : this(json);
 
-  /// Defensive-copy constructor — isolates this model from [data].
   JsonModel.copyOf(Map<String, dynamic> data)
       : this(Map<String, dynamic>.from(data));
 
-  /// Raw JSON bag (mutated by setters).
+  /// Raw JSON bag (mutated by setters). Already JSON-safe when filled via
+  /// [$set] / network `jsonDecode`.
   final Map<String, dynamic> $data;
 
-  // ── read ─────────────────────────────────────────────────────────────
+  /// Soft cache of nested [$model] / [$file] wrappers (same map identity).
+  Map<String, JsonModel>? _nest;
+
+  // ── read (one key) ───────────────────────────────────────────────────
 
   String $str(String key, [String fallback = '']) => $data.str(key, fallback);
   String? $strOrNull(String key) => $data.strOrNull(key);
@@ -47,8 +43,6 @@ class JsonModel implements JsonEncodable {
   Uint8List? $bytes(String key) => $data.bytes(key);
   BigInt? $bigInt(String key) => $data.bigInt(key);
 
-  /// Read an enum from JSON — [among] is every case (`Role.values`);
-  /// [or] is fallback only when missing/unknown.
   T $enumAt<T extends Enum>(
     String key, {
     required List<T> among,
@@ -62,7 +56,6 @@ class JsonModel implements JsonEncodable {
   }) =>
       $data.enumOrNull(key, among);
 
-  /// Deprecated alias — prefer [$enumAt].
   T $enum<T extends Enum>(String key, List<T> values, T fallback) =>
       $enumAt(key, among: values, or: fallback);
 
@@ -72,62 +65,138 @@ class JsonModel implements JsonEncodable {
   List<T> $list<T>(String key, T Function(dynamic) map) =>
       $data.listOf(key, map);
 
-  /// Nested models as a [JsonModelList] — **lazy**, index-cached.
-  ///
-  /// Prefer this for arrays of tens–hundreds of objects (product lists,
-  /// search hits). `list[i]` allocates a model only when that row is read.
-  JsonModelList<T> $models<T extends JsonModel>(
-    String key,
-    T Function(Map<String, dynamic>) create,
-  ) {
-    final v = $data[key];
-    if (v is! List) return JsonModelList.empty(create);
-    return JsonModelList(v, create);
+  // ── deep path (no intermediate models) ───────────────────────────────
+
+  /// Walk `a.b.0.c` or `['a','b',0,'c']` without building nested models.
+  Object? $at(Object path) => jsonAt($data, path);
+
+  Map<String, dynamic>? $mapAt(Object path) => jsonMapAt($data, path);
+
+  String $strAt(Object path, [String fallback = '']) =>
+      jsonStrAt($data, path, fallback);
+
+  String? $strAtOrNull(Object path) => jsonStrAtOrNull($data, path);
+
+  int $intAt(Object path, [int fallback = 0]) =>
+      jsonIntAt($data, path, fallback);
+
+  int? $intAtOrNull(Object path) => jsonIntAtOrNull($data, path);
+
+  bool $boolAt(Object path, [bool fallback = false]) =>
+      jsonBoolAt($data, path, fallback);
+
+  double $doubleAt(Object path, [double fallback = 0]) =>
+      jsonDoubleAt($data, path, fallback);
+
+  /// Lightweight nested bag view (shares map). Prefer [$strAt] when you
+  /// only need one field under a deep path.
+  JsonModel? $view(String key) {
+    final m = $data.mapOrNull(key);
+    if (m == null) return null;
+    return JsonModel(m);
   }
 
+  // ── nested models / lists ────────────────────────────────────────────
+
+  /// Lazy [JsonModelList]. Caps the in-memory model cache for huge arrays
+  /// (default: cache all if ≤256 items, else 64 hot slots).
+  JsonModelList<T> $models<T extends JsonModel>(
+    String key,
+    T Function(Map<String, dynamic>) create, {
+    int? maxCached,
+  }) {
+    final v = $data[key];
+    if (v is! List) return JsonModelList.empty(create);
+    return JsonModelList(v, create, maxCached: maxCached);
+  }
+
+  /// Nested model — **cached** while the underlying map identity stays put.
   T? $model<T extends JsonModel>(
     String key,
     T Function(Map<String, dynamic>) create,
   ) {
     final m = $data.mapOrNull(key);
-    if (m == null) return null;
-    return create(m);
+    if (m == null) {
+      _nest?.remove(key);
+      return null;
+    }
+    final hit = _nest?[key];
+    if (hit is T && identical(hit.$data, m)) return hit;
+    final created = create(m);
+    (_nest ??= <String, JsonModel>{})[key] = created;
+    return created;
   }
 
   T $modelReq<T extends JsonModel>(
     String key,
     T Function(Map<String, dynamic>) create,
-  ) =>
-      create($data.mapReq(key));
+  ) {
+    final v = $model(key, create);
+    if (v == null) throw FormatException('Missing object "$key"');
+    return v;
+  }
 
   JsonFile? $file(String key) => $model(key, JsonFile.new);
 
-  JsonModelList<JsonFile> $files(String key) => $models(key, JsonFile.new);
+  JsonModelList<JsonFile> $files(String key, {int? maxCached}) =>
+      $models(key, JsonFile.new, maxCached: maxCached);
 
   // ── write ────────────────────────────────────────────────────────────
 
   void $set(String key, Object? value) {
+    _nest?.remove(key);
     if (value == null) {
       $data.remove(key);
-    } else {
-      $data[key] = JsonCodecX.encode(value);
+      return;
     }
+    // Fast path: values that are already JSON-safe — skip encode tree walk.
+    if (value is String || value is num || value is bool) {
+      $data[key] = value;
+      return;
+    }
+    if (value is Enum) {
+      $data[key] = value.name;
+      return;
+    }
+    $data[key] = JsonCodecX.encode(value);
   }
 
   void $setModel(String key, JsonModel? model) {
+    _nest?.remove(key);
     if (model == null) {
       $data.remove(key);
     } else {
       $data[key] = model.$data;
+      (_nest ??= <String, JsonModel>{})[key] = model;
     }
   }
 
-  /// Replace / set a nested array, sharing [list.raw] when possible.
   void $setModels(String key, JsonModelList<JsonModel>? list) {
+    _nest?.remove(key);
     if (list == null) {
       $data.remove(key);
     } else {
       $data[key] = list.raw;
+    }
+  }
+
+  /// Set a deep path, creating intermediate maps as needed.
+  void $setAt(Object path, Object? value) {
+    final encoded = value == null ||
+            value is String ||
+            value is num ||
+            value is bool
+        ? value
+        : value is Enum
+            ? value.name
+            : JsonCodecX.encode(value);
+    $data.setAt(path, encoded);
+    // Best-effort: drop direct-child nest cache if path starts with that key.
+    final segs = path is List
+        ? path
+        : path.toString().split('.');
+    if (segs.isNotEmpty) {
+      _nest?.remove(segs.first.toString());
     }
   }
 
@@ -137,6 +206,12 @@ class JsonModel implements JsonEncodable {
 
   // ── codec ────────────────────────────────────────────────────────────
 
+  /// Zero-copy view of the bag for Dio/`http` when values were set via
+  /// [$set] or came from `jsonDecode`. Do not mutate if you still use the model.
+  Map<String, dynamic> get $json => $data;
+
+  /// Deep-encode (DateTime, custom `toJson`, …). Prefer [$json] for
+  /// already-safe bags — avoids a full tree copy on every request.
   @override
   Map<String, dynamic> toJson() {
     final encoded = JsonCodecX.encode($data);
@@ -149,6 +224,7 @@ class JsonModel implements JsonEncodable {
       JsonCodecX.encodeString(toJson(), pretty: pretty);
 
   void loadJson(Map<String, dynamic> json) {
+    _nest = null;
     $data
       ..clear()
       ..addAll(json);

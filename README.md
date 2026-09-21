@@ -20,6 +20,32 @@ Nested models share the parent's map (so `user.photo?.name = 'x'` sticks). Use
 
 ---
 
+## Deep paths (large / nested JSON)
+
+Prefer path getters when you need one field deep — no intermediate models:
+
+```dart
+final city = order.$strAt('customer.address.city');
+final sku  = order.$strAt('items.0.sku');
+final qty  = order.$intAt(['items', 0, 'qty']);
+
+order.$setAt('customer.address.zip', '10100');
+```
+
+Same helpers on any map: `map.strAt('a.b')`, `jsonAt(root, 'a.0.b')`.
+
+| Need | Use |
+|------|-----|
+| One deep field | `$strAt` / `$intAt` / `$at` |
+| Nested model you’ll touch often | `$model` (cached) |
+| One-shot nested bag | `$view` |
+| Huge array | `$models` / `JsonHttp.models` |
+
+`$json` is the bag itself (zero-copy for Dio). `toJson()` deep-encodes
+DateTime / custom types — use it when the bag may hold Dart-only values.
+
+---
+
 ## Enums — why `Role.values`, not `Role.admin`
 
 JSON has a **string**: `"role": "admin"`.
@@ -88,7 +114,7 @@ class Post extends JsonModel {
   JsonFile? get avatar => $file('avatar');
   set avatar(JsonFile? v) => $setModel('avatar', v);
 
-  List<JsonFile> get attachments => $files('attachments');
+  JsonModelList<JsonFile> get attachments => $files('attachments');
 }
 
 final post = JsonHttp.map(res.data, Post.fromJson);
@@ -121,7 +147,7 @@ final list = JsonHttp.models(
   Product.fromJson,
 ); // lazy — good for ~200 item catalogs
 
-await dio.post('/users', data: user.asRequestData);
+await dio.post('/users', data: user.asRequestData); // = user.$json
 ```
 
 ## package:http
@@ -170,15 +196,16 @@ dependencies:
 
 `$models` / `JsonHttp.models` return a **lazy** [JsonModelList]: constructing
 the list does not wrap every element. Each model is created when that index
-is read (and cached), so a `ListView` of 200 products only allocates the
-visible rows.
+is read (and cached up to `maxCached`), so a `ListView` of 200 products only
+allocates the visible rows.
 
 ```dart
 final products = JsonHttp.models(res.data, Product.fromJson);
-// or: catalog.$models('items', Product.fromJson)
+// or: catalog.$models('items', Product.fromJson, maxCached: 32)
 
 Text(products[index].title);          // wrap this row only
 products.mapAt(index).str('title');   // even lighter — raw map, no model
+order.$strAt('items.0.sku');          // deep path — no model at all
 ```
 
 `JsonHttp.list` still exists for small arrays when you want every element
@@ -191,4 +218,4 @@ eagerly wrapped.
 Same practical types for REST. No codegen. Field access is a map lookup
 (fine vs network). For huge offline decode loops that touch every field of
 every row, codegen can still win — for typical shop catalogs (~200 items +
-ListView), prefer `JsonHttp.models` / `$models`.
+ListView), prefer `JsonHttp.models` / `$models` / `$strAt`.

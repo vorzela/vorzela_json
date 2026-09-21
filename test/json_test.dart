@@ -291,4 +291,80 @@ void main() {
     files[10].name = 'edited.pdf';
     expect(catalog.toJson()['files'][10]['name'], 'edited.pdf');
   });
+
+  test('deep path reads skip intermediate models', () {
+    final order = User.fromJson({
+      'name': 'Ada',
+      'role': 'admin',
+      'photo': {
+        'name': 'me.png',
+        'meta': {'city': 'Nairobi', 'zip': 100},
+      },
+      'files': [
+        {'name': 'a.pdf', 'size': 3},
+        {'name': 'b.pdf', 'size': 7},
+      ],
+    });
+
+    expect(order.$strAt('photo.meta.city'), 'Nairobi');
+    expect(order.$intAt('photo.meta.zip'), 100);
+    expect(order.$strAt('files.0.name'), 'a.pdf');
+    expect(order.$intAt(['files', 1, 'size']), 7);
+    expect(order.$strAtOrNull('photo.meta.missing'), isNull);
+    expect(order.$at('photo.meta'), isA<Map>());
+
+    // Free functions / map extension.
+    expect(jsonStrAt(order.$data, 'photo.name'), 'me.png');
+    expect(order.$data.strAt('files.1.name'), 'b.pdf');
+  });
+
+  test('\$setAt creates nested maps/lists and writes through', () {
+    final u = User({'name': 'Ada'});
+    u.$setAt('photo.meta.city', 'Mombasa');
+    u.$setAt('files.0.name', 'x.pdf');
+    expect(u.$strAt('photo.meta.city'), 'Mombasa');
+    expect(u.$strAt('files.0.name'), 'x.pdf');
+    expect(u.toJson()['photo']['meta']['city'], 'Mombasa');
+  });
+
+  test('\$model nest cache reuses the same wrapper', () {
+    final u = User.fromJson({
+      'name': 'Ada',
+      'photo': {'name': 'a.png'},
+    });
+    final a = u.photo;
+    final b = u.photo;
+    expect(identical(a, b), isTrue);
+    a!.name = 'b.png';
+    expect(u.$strAt('photo.name'), 'b.png');
+  });
+
+  test('\$json is zero-copy; toJson still deep-copies', () {
+    final u = User.fromJson({'name': 'Ada', 'role': 'admin'});
+    expect(identical(u.$json, u.$data), isTrue);
+    expect(identical(u.asRequestData, u.$data), isTrue);
+
+    final encoded = u.toJson();
+    expect(identical(encoded, u.$data), isFalse);
+    encoded['name'] = 'Mutated';
+    expect(u.name, 'Ada');
+  });
+
+  test('JsonModelList maxCached caps wrapper retention', () {
+    final raw = <Map<String, dynamic>>[
+      for (var i = 0; i < 100; i++) {'name': 'P$i', 'role': 'member'},
+    ];
+    final products = JsonHttp.models(raw, User.fromJson, maxCached: 8);
+    expect(products.maxCached, 8);
+
+    for (var i = 0; i < 20; i++) {
+      expect(products[i].name, 'P$i');
+    }
+    // First 8 stay cached; later indexes are fresh each read.
+    expect(identical(products[0], products[0]), isTrue);
+    expect(identical(products[7], products[7]), isTrue);
+    final a = products[15];
+    final b = products[15];
+    expect(identical(a, b), isFalse);
+  });
 }

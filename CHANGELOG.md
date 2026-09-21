@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+- **Deep path reads** — `$at` / `$strAt` / `$intAt` / `$boolAt` / `$doubleAt` /
+  `$mapAt` (and free functions `jsonAt` / `jsonStrAt` / …) walk nested
+  objects and list indexes without allocating intermediate models. Paths:
+  `"user.address.city"`, `"items.0.name"`, or `['items', 0, 'name']`.
+- **`$setAt` / `Map.setAt`** — write a deep path, creating intermediate
+  maps/lists as needed.
+- **`$json`** — zero-copy bag for Dio/`http` when values came from
+  `jsonDecode` or `$set`. Prefer over `toJson()` on the request hot path.
+- **`$view`** — one-shot nested bag without the nest cache.
+- **Nest cache** on `$model` / `$file` — same map identity → same wrapper.
+- **`JsonModelList.maxCached`** — caps how many wrappers stay alive
+  (default: all if length ≤ 256, else 64). Pass `maxCached:` on `$models` /
+  `JsonHttp.models`.
+
+### Changed
+- **`$set`** fast-path for `String` / `num` / `bool` / `Enum` (skips encode
+  tree walk).
+- **`JsonHttp.data` / `asRequestData`** use `$json` for models (no deep
+  copy). `toJson()` still deep-encodes for DateTime / custom types.
+
 ## 0.2.0
 
 ### Added
@@ -21,40 +44,6 @@
   `String` (avoids `toString()` on the hot path for catalogs).
 
 ## 0.1.0
-
-### Fixed
-- **Nested model writes were silently lost.** `$model()` / `$models()` /
-  `$file()` / `$files()` used to hand back a *copy* of the sub-map, so
-  `user.photo?.name = 'x'` mutated a throwaway clone and never showed up in
-  `user.toJson()`. Nested models now share their parent's backing map, so
-  writes propagate as expected.
-- **`toJson()` copied the output map twice** (once inside `JsonCodecX.encode`,
-  once more via a redundant `Map.from(...)` wrapper). Now a single copy.
-- **`JsonCodecX.encode()` could mask real errors.** If a custom `toJson()`
-  implementation threw, the exception was swallowed and replaced with a
-  misleading "implement toJson()" error. Only the "no such method" case
-  (i.e. the value genuinely has no `toJson()`) is swallowed now; real
-  exceptions propagate.
-- **`$models()` allocated an extra intermediate list** (`listOfMaps(...).map(...).toList()`)
-  on every call. It now builds the result list directly.
-
-### Changed (behavior)
-- `JsonModel(data)` / `JsonModel.fromJson(json)` **no longer defensively
-  copy** the map you pass in — they wrap it by reference. This is what makes
-  the nested-write fix above possible, and avoids a full tree copy on every
-  model constructed (the dominant cost when decoding many models). This is
-  always safe for real JSON (`jsonDecode()` output is always a proper
-  `Map<String, dynamic>`). If you need the model isolated from a map you
-  keep mutating elsewhere, use the new `JsonModel.copyOf(data)` constructor,
-  which clones like the old default constructor did.
-
-### Added
-- `JsonModel.copyOf(Map<String, dynamic> data)` — defensive-copy constructor
-  for when you want the old copy-on-construct behavior.
-
-## 0.0.3 and earlier
-
-See git history.
 
 ### Fixed
 - **Nested model writes were silently lost.** `$model()` / `$models()` /
