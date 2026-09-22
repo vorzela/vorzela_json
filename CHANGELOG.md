@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+### Added
+- **`packages/vorzela_json_lint`** — `custom_lint` rules for deep paths,
+  lazy `JsonHttp.models`, `$json` request payloads, enum `among: values`.
+
 ## 0.3.0
 
 ### Added

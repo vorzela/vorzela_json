@@ -219,3 +219,17 @@ Same practical types for REST. No codegen. Field access is a map lookup
 (fine vs network). For huge offline decode loops that touch every field of
 every row, codegen can still win — for typical shop catalogs (~200 items +
 ListView), prefer `JsonHttp.models` / `$models` / `$strAt`.
+
+---
+
+## Linter (best practices)
+
+Use [`vorzela_json_lint`](packages/vorzela_json_lint) with `custom_lint` ^0.8.1:
+
+- prefer `$strAt` over nested `$model(...).$str`
+- prefer `JsonHttp.models` over eager `JsonHttp.list` for catalogs
+- prefer `$json` / `asRequestData` over `toJson()` on request hot paths
+- `among: Role.values` for `$enumAt` (not a single case)
+- do not mutate `$json[...]` / `$data[...]`
+
+See [packages/vorzela_json_lint/README.md](packages/vorzela_json_lint/README.md).

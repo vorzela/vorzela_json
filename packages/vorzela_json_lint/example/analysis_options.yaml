@@ -1,0 +1,12 @@
+analyzer:
+  plugins:
+    - custom_lint
+include: package:lints/recommended.yaml
+custom_lint:
+  rules:
+    - prefer_str_at_for_deep_field
+    - avoid_nested_json_model_chain
+    - prefer_json_http_models
+    - prefer_dollar_json_for_request
+    - prefer_enum_values_in_enum_at
+    - avoid_mutating_dollar_json

@@ -1,0 +1,12 @@
+name: vorzela_json_lint_example
+publish_to: none
+environment:
+  sdk: ^3.5.0
+dependencies:
+  vorzela_json:
+    path: ../../..
+dev_dependencies:
+  custom_lint: ^0.8.1
+  vorzela_json_lint:
+    path: ..
+  lints: ^5.0.0

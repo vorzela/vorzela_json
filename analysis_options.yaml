@@ -1,1 +1,5 @@
+analyzer:
+  exclude:
+    - packages/**
+
 include: package:lints/recommended.yaml
